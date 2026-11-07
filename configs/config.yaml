@@ -1,16 +1,20 @@
 project:
   name: smart_hybrid_bookshelf
   seed: 42
-
 data:
   n_users: 2000
   n_items: 500
   n_ratings: 50000
   min_user_ratings: 5
-
+  archive_dir: archive
+  canonical_dir: data/raw
+  features_dir: data/processed
+  min_book_ratings: 10
 evaluation:
-  k_values: [5, 10, 20]
-
+  k_values:
+  - 5
+  - 10
+  - 20
 hybrid:
   cold_threshold: 5
   k_rrf: 60
@@ -23,7 +27,6 @@ hybrid:
       item_knn: 0.2
       two_tower: 0.4
       popularity: 0.1
-
 models:
   popularity:
     min_ratings: 10
@@ -35,10 +38,15 @@ models:
     n_iter: 10
   content:
     max_features: 2000
-    ngram_range: [1, 2]
+    ngram_range:
+    - 1
+    - 2
   two_tower:
     embedding_dim: 32
-    hidden_dims: [256, 128, 64]
+    hidden_dims:
+    - 256
+    - 128
+    - 64
     epochs: 10
     batch_size: 512
     lr: 0.001

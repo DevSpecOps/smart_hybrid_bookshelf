@@ -21,3 +21,5 @@ reports/*.json
 .DS_Store
 .vscode/
 .idea/
+archive/*
+!archive/.gitkeep
