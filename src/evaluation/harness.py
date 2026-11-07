@@ -9,11 +9,25 @@ class EvaluationHarness:
         self.k_values = k_values
         self.cold_threshold = cold_threshold
 
+    def _fit_all(self, train_df):
+        for name, adapter in self.models.items():
+            if getattr(adapter, "is_orchestrator", False):
+                continue
+            try:
+                adapter.fit(train_df)
+            except Exception as e:
+                print("WARN " + name + " fit failed: " + type(e).__name__ + ": " + str(e))
+        for name, adapter in self.models.items():
+            if not getattr(adapter, "is_orchestrator", False):
+                continue
+            try:
+                adapter.fit(train_df)
+            except Exception as e:
+                print("WARN " + name + " fit failed: " + type(e).__name__ + ": " + str(e))
+
     def evaluate(self, train_df, test_df):
         train_counts = train_df.groupby("user_id").size().to_dict()
-        test_relevant = (
-            test_df.groupby("user_id")["book_id"].apply(set).to_dict()
-        )
+        test_relevant = test_df.groupby("user_id")["book_id"].apply(set).to_dict()
         catalog = set(train_df["book_id"].unique()) | set(test_df["book_id"].unique())
         total_items = len(catalog)
 
@@ -22,19 +36,16 @@ class EvaluationHarness:
             n = train_counts.get(uid, 0)
             segments[uid] = "cold_start" if n < self.cold_threshold else "active"
 
+        self._fit_all(train_df)
+
         max_k = max(self.k_values)
         results = {}
         for name, adapter in self.models.items():
-            try:
-                adapter.fit(train_df)
-            except Exception as e:
-                print("WARN " + name + " fit failed: " + type(e).__name__ + ": " + str(e))
-                continue
             recs_by_user = {}
             for uid in test_relevant:
                 try:
                     recs_by_user[uid] = adapter.recommend(uid, n=max_k)
-                except Exception as e:
+                except Exception:
                     recs_by_user[uid] = []
             model_result = {}
             for k in self.k_values:

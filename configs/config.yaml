@@ -16,17 +16,17 @@ evaluation:
   - 10
   - 20
 hybrid:
-  cold_threshold: 5
+  cold_threshold: 50
   k_rrf: 60
   weights:
     cold_start:
       popularity: 0.6
       content: 0.4
     active:
-      svd: 0.3
-      item_knn: 0.2
-      two_tower: 0.4
-      popularity: 0.1
+      content: 0.45
+      itemknn: 0.35
+      popularity: 0.2
+  candidates_per_model: 50
 models:
   popularity:
     min_ratings: 10

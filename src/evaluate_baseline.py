@@ -13,6 +13,7 @@ from src.data.split import random_leave_one_out_split
 from src.evaluation.harness import EvaluationHarness
 from src.evaluation.report import save_metrics
 from src.models.adapters import ModelAdapter
+from src.models.segmented_hybrid import SegmentedHybrid
 
 
 def parse_args():
@@ -41,9 +42,9 @@ def build_models(raw_dir, cfg):
     pop_min = pop_cfg.get("min_ratings", 10)
     pop_score = pop_cfg.get("score", "bayesian")
     knn_neighbors = knn_cfg.get("k_neighbors", 100)
-    knn_predict = knn_cfg.get("k_predict", 100)
-    svd_components = svd_cfg.get("n_components", 64)
-    svd_iter = svd_cfg.get("n_iter", 50)
+    knn_predict = knn_cfg.get("k_predict", 20)
+    svd_components = svd_cfg.get("n_components", 32)
+    svd_iter = svd_cfg.get("n_iter", 10)
 
     candidates = [
         ("popularity", lambda: PopularityRecommender(min_ratings=pop_min, score=pop_score), None),
@@ -57,12 +58,24 @@ def build_models(raw_dir, cfg):
             None,
         ))
 
-    models = {}
+    base = {}
     for name, factory, extra in candidates:
         try:
-            models[name] = ModelAdapter(name, factory(), fit_extra=extra)
+            base[name] = ModelAdapter(name, factory(), fit_extra=extra)
         except Exception as e:
             print("WARN " + name + " build failed: " + type(e).__name__ + ": " + str(e))
+
+    hybrid_cfg = cfg.get("hybrid", {})
+    hybrid = SegmentedHybrid(
+        models=base,
+        weights=hybrid_cfg.get("weights", {}),
+        cold_threshold=hybrid_cfg.get("cold_threshold", 50),
+        k_rrf=hybrid_cfg.get("k_rrf", 60),
+        candidates_per_model=hybrid_cfg.get("candidates_per_model", 50),
+    )
+
+    models = dict(base)
+    models["hybrid"] = hybrid
     return models
 
 
