@@ -32,7 +32,8 @@ models:
     min_ratings: 10
     score: bayesian
   item_knn:
-    k_neighbors: 30
+    k_neighbors: 100
+    k_predict: 20
   svd:
     n_components: 32
     n_iter: 10

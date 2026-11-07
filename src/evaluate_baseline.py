@@ -1,0 +1,113 @@
+﻿import argparse
+
+import pandas as pd
+import yaml
+
+from src.baseline import (
+    PopularityRecommender,
+    ContentBasedRecommender,
+    ItemBasedCF,
+    SVDRecommender,
+)
+from src.data.split import random_leave_one_out_split
+from src.evaluation.harness import EvaluationHarness
+from src.evaluation.report import save_metrics
+from src.models.adapters import ModelAdapter
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--max-users", type=int, default=None)
+    return parser.parse_args()
+
+
+def load_config(path):
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def build_models(raw_dir, cfg):
+    models_cfg = cfg.get("models", {})
+    pop_cfg = models_cfg.get("popularity", {})
+    knn_cfg = models_cfg.get("item_knn", {})
+    svd_cfg = models_cfg.get("svd", {})
+
+    books = pd.read_csv(raw_dir / "books.csv")
+    book_tags = pd.read_csv(raw_dir / "book_tags.csv")
+    tags = pd.read_csv(raw_dir / "tags.csv")
+
+    pop_min = pop_cfg.get("min_ratings", 10)
+    pop_score = pop_cfg.get("score", "bayesian")
+    knn_neighbors = knn_cfg.get("k_neighbors", 100)
+    knn_predict = knn_cfg.get("k_predict", 100)
+    svd_components = svd_cfg.get("n_components", 64)
+    svd_iter = svd_cfg.get("n_iter", 50)
+
+    candidates = [
+        ("popularity", lambda: PopularityRecommender(min_ratings=pop_min, score=pop_score), None),
+        ("content", lambda: ContentBasedRecommender(), (books, book_tags, tags)),
+        ("itemknn", lambda: ItemBasedCF(n_neighbors=knn_neighbors, k_predict=knn_predict), None),
+    ]
+    if SVDRecommender is not None:
+        candidates.append((
+            "svd",
+            lambda: SVDRecommender(n_factors=svd_components, n_epochs=svd_iter),
+            None,
+        ))
+
+    models = {}
+    for name, factory, extra in candidates:
+        try:
+            models[name] = ModelAdapter(name, factory(), fit_extra=extra)
+        except Exception as e:
+            print("WARN " + name + " build failed: " + type(e).__name__ + ": " + str(e))
+    return models
+
+
+def print_summary(results):
+    for name, per_k in results.items():
+        for k, m in per_k.items():
+            g = m["global"]
+            line = "{0:12s} {1:6s} P={2:.4f} R={3:.4f} nDCG={4:.4f} cov={5:.3f} n={6}"
+            print(line.format(
+                name, k,
+                g["precision"], g["recall"], g["ndcg"],
+                m["coverage"], g["n_users"],
+            ))
+
+
+def main():
+    args = parse_args()
+    cfg = load_config(args.config)
+    raw = pd.read_csv("data/raw/ratings.csv")
+    seed = cfg["project"]["seed"]
+    min_r = cfg["data"]["min_user_ratings"]
+    train, test = random_leave_one_out_split(raw, min_ratings=min_r, seed=seed)
+
+    if args.max_users:
+        keep = test["user_id"].drop_duplicates().head(args.max_users).tolist()
+        test = test[test["user_id"].isin(keep)].reset_index(drop=True)
+
+    print("train: " + str(train.shape) + "  test: " + str(test.shape))
+
+    from pathlib import Path
+    models = build_models(Path("data/raw"), cfg)
+    print("built models: " + str(list(models.keys())))
+    if not models:
+        raise RuntimeError("no models built")
+
+    harness = EvaluationHarness(
+        models=models,
+        k_values=cfg["evaluation"]["k_values"],
+        cold_threshold=cfg["hybrid"]["cold_threshold"],
+    )
+    results = harness.evaluate(train, test)
+    out = save_metrics(results, args.output)
+    print("metrics saved to " + str(out))
+    print_summary(results)
+
+
+if __name__ == "__main__":
+    main()

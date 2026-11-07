@@ -4,9 +4,10 @@ install:
 	pip install -r requirements.txt
 
 data:
-	python -m src.data.make_dataset --config configs/config.yaml --output data/raw
+	python scripts/download_data.py
 
 features:
+	python -m src.data.load_real --archive archive --output data/raw --config configs/config.yaml
 	python -m src.data.build_features --raw data/raw --output data/processed
 
 eval:
@@ -18,4 +19,4 @@ pipeline:
 reproduce: data features eval
 
 clean:
-	rm -rf data/processed reports/*.json
+	rm -rf data/raw/*.csv data/processed/*.csv reports/*.json
