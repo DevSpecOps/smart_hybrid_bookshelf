@@ -229,6 +229,7 @@ Random 80/20 splits inflate recall by giving each user ~20 held-out items; the m
 
 - **SVD is undertrained** for the LOO protocol; excluded from hybrid. With more training time or GPU-accelerated Surprise, this could be revisited.
 - **Cold-start sample is small.** With `cold_threshold=50`, only 1.8% of users (939/53,424) fall into the cold-start segment. The hybrid's cold-start weights are therefore tuned on a small sample and may not generalize. A larger threshold would increase the segment but requires users with fewer ratings than the Goodreads-10k dataset provides.
+- **Cold-start Two-Tower signal unexploited.** In the 2000-user eval, Two-Tower achieves R@10=0.100 on cold-start users, but the current hybrid cold-start weights (`popularity: 0.6, content: 0.4`) do not include it. Adding `two_tower: 0.3` to cold-start weights is a concrete direction for future tuning; the current sample (10 users) is too small to justify it now.
 - **Two-Tower default is subsampled.** Default training uses 2M positives (from users with the most interactions); full training requires `--full`. On GPU, full training runs in ~10 min and typically gains an additional 2-4% R@10. See `scripts/train_two_tower.py --help`.
 - **No temporal information.** Goodreads-10k ratings have no timestamps; a temporal split (better for real deployment) is not possible with this dataset.
 

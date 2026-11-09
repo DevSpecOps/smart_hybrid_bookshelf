@@ -265,11 +265,11 @@ else:
 """),
         md("""## Findings
 
-- Cold-start segment is small (1.8% of users) because Goodreads-10k has dense users
-- Content dominates cold-start because it does not depend on user history
-- Active segment is where Two-Tower contributes its largest marginal gain
-- Best weight configuration by R@10: content-heavy (without SVD, capped ItemKNN)
-- Adding Two-Tower to the hybrid: +8% R@10, +12% nDCG, +52% coverage
+- Cold-start segment is only 0.5% of the 2000-user evaluation set (10 users); full-dataset rate is ~1.8% but sampled eval favors active users.
+- Classical baselines score 0.000 on cold-start (10 users) — sample too small for inference.
+- Two-Tower is the only model with non-zero cold-start signal (R@10=0.100 on 10 users) — confidence interval spans ~0 to 0.30.
+- Active segment (1990 users) is where the hybrid outperforms every individual model: R@10=0.0518 vs content 0.0462.
+- Sweep winner (classical-only D_no_svd) had R@10=0.050. Adding Two-Tower at weight 0.25 in active lifts to R@10=0.0515, nDCG@10=0.0278, coverage=0.340 — +3% R@10, +11% nDCG, +52% coverage over sweep winner.
 """),
     ]
     nb = nbf.v4.new_notebook()
