@@ -23,9 +23,10 @@ hybrid:
       popularity: 0.6
       content: 0.4
     active:
-      content: 0.45
-      itemknn: 0.35
-      popularity: 0.2
+      content: 0.35
+      itemknn: 0.25
+      popularity: 0.15
+      two_tower: 0.25
   candidates_per_model: 50
 models:
   popularity:
@@ -43,12 +44,15 @@ models:
     - 1
     - 2
   two_tower:
+    id_dim: 32
     embedding_dim: 32
     hidden_dims:
-    - 256
     - 128
     - 64
-    epochs: 10
-    batch_size: 512
+    epochs: 3
+    batch_size: 1024
     lr: 0.001
-    negatives_per_positive: 4
+    temperature: 0.07
+    positives_threshold: 4
+    subsample_size: 2000000
+    checkpoint: data/processed/two_tower.pt

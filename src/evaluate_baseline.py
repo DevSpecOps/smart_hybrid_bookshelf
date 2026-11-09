@@ -1,4 +1,5 @@
-﻿import argparse
+import argparse
+from pathlib import Path
 
 import pandas as pd
 import yaml
@@ -34,6 +35,7 @@ def build_models(raw_dir, cfg):
     pop_cfg = models_cfg.get("popularity", {})
     knn_cfg = models_cfg.get("item_knn", {})
     svd_cfg = models_cfg.get("svd", {})
+    tt_cfg = models_cfg.get("two_tower", {})
 
     books = pd.read_csv(raw_dir / "books.csv")
     book_tags = pd.read_csv(raw_dir / "book_tags.csv")
@@ -64,6 +66,18 @@ def build_models(raw_dir, cfg):
             base[name] = ModelAdapter(name, factory(), fit_extra=extra)
         except Exception as e:
             print("WARN " + name + " build failed: " + type(e).__name__ + ": " + str(e))
+
+    checkpoint = Path(tt_cfg.get("checkpoint", "data/processed/two_tower.pt"))
+    if checkpoint.exists():
+        try:
+            from src.models.two_tower import TwoTowerRecommender
+            tt = TwoTowerRecommender.load(checkpoint)
+            base["two_tower"] = ModelAdapter("two_tower", tt)
+            print("loaded two_tower from " + str(checkpoint))
+        except Exception as e:
+            print("WARN two_tower load failed: " + type(e).__name__ + ": " + str(e))
+    else:
+        print("WARN two_tower checkpoint missing (run: python scripts/train_two_tower.py)")
 
     hybrid_cfg = cfg.get("hybrid", {})
     hybrid = SegmentedHybrid(
@@ -105,7 +119,6 @@ def main():
 
     print("train: " + str(train.shape) + "  test: " + str(test.shape))
 
-    from pathlib import Path
     models = build_models(Path("data/raw"), cfg)
     print("built models: " + str(list(models.keys())))
     if not models:
