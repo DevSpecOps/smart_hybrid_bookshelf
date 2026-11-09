@@ -10,3 +10,4 @@ pyyaml>=6.0
 tqdm>=4.65
 jupyterlab>=4.0
 kaggle>=1.6
+nbformat>=5.9

@@ -1,4 +1,4 @@
-.PHONY: install data features train-neural eval pipeline reproduce clean help
+.PHONY: install data features train-neural eval pipeline reproduce clean notebooks help
 
 help:
 	@echo "Targets:"
@@ -30,7 +30,10 @@ eval:
 pipeline:
 	python -m src.pipeline --config configs/config.yaml
 
-reproduce: pipeline
+notebooks:
+	python scripts/build_notebooks.py
+
+reproduce: pipeline notebooks
 
 clean:
 	rm -rf data/raw/*.csv data/processed/*.csv data/processed/*.pt reports/*.json
