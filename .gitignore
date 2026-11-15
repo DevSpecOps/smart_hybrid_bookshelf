@@ -21,5 +21,9 @@ reports/*.json
 .DS_Store
 .vscode/
 .idea/
-archive/*
-!archive/.gitkeep
+
+
+
+# archive/ is committed for reproducibility (Kaggle Goodreads-10k, ~32 MB)
+
+*.log

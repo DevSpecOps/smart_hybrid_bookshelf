@@ -35,17 +35,12 @@ def check_raw():
     return all(file_exists("data/raw/" + f) for f in ["ratings.csv","books.csv","users.csv","book_tags.csv","tags.csv"])
 
 
-def check_features():
-    return all(file_exists("data/processed/" + f) for f in ["user_features.csv","item_features.csv"])
-
-
 def check_checkpoint():
     return file_exists("data/processed/two_tower.pt")
 
 
 def main():
     args = parse_args()
-
     if args.force or not check_archive():
         run([sys.executable, "scripts/download_data.py"])
     else:
@@ -56,16 +51,13 @@ def main():
     else:
         print("SKIP load_real (data/raw exists)")
 
-    if args.force or not check_features():
-        run([sys.executable, "-m", "src.data.build_features", "--raw", "data/raw", "--output", "data/processed"])
-    else:
-        print("SKIP build_features (data/processed exists)")
-
     if not args.skip_train:
         if args.force or not check_checkpoint():
             cmd = [sys.executable, "scripts/train_two_tower.py", "--config", args.config]
             if args.full:
                 cmd.append("--full")
+            if args.force:
+                cmd.append("--force-retrain")
             run(cmd)
         else:
             print("SKIP train_two_tower (checkpoint exists; use --force to retrain)")

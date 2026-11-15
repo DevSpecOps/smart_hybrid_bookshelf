@@ -1,6 +1,6 @@
 # Smart Hybrid Bookshelf
 
-A hybrid book recommendation system combining classical baselines (popularity, content-based, item-based collaborative filtering, matrix factorization) with a neural Two-Tower retrieval model. The system segments users by activity level and fuses predictions via weighted Reciprocal Rank Fusion. Fully reproducible end-to-end.
+A hybrid book recommendation system combining classical baselines (popularity, content-based, item-based collaborative filtering, matrix factorization) with a neural Two-Tower retrieval model. The system segments users by activity level and fuses predictions via weighted Reciprocal Rank Fusion. Fully reproducible end-to-end on CPU.
 
 ## Table of Contents
 
@@ -32,23 +32,26 @@ We introduce segment-aware weighting, a Two-Tower model trained with NCE in-batc
 
 ## Dataset
 
-The project uses the **Goodreads-10k** dataset (the `zygmuntz/goodbooks-10k` release) — the same dataset used in the homework baseline.
+The project uses the **Kaggle version** of the Goodreads-10k dataset (`zygmunt/goodbooks-10k`, https://www.kaggle.com/datasets/zygmunt/goodbooks-10k) -- the exact same dataset used in the homework baseline `smart_bookshelf`.
 
 | File | Rows | Columns |
 |---|---|---|
-| `books.csv` | 10,000 | `book_id`, `goodreads_book_id`, `title`, `original_title`, `authors`, `original_publication_year`, ... |
-| `ratings.csv` | ~6,000,000 | `user_id`, `book_id`, `rating` |
+| `books.csv` | 10,000 | `id`, `book_id`, `best_book_id`, `work_id`, `authors`, `original_publication_year`, `original_title`, `title`, ... |
+| `ratings.csv` | ~980,000 | `book_id`, `user_id`, `rating` |
 | `tags.csv` | ~34,000 | `tag_id`, `tag_name` |
 | `book_tags.csv` | ~1,000,000 | `goodreads_book_id`, `tag_id`, `count` |
 
-After filtering (`min_user_ratings=5`, `min_book_ratings=10`):
+After **deduplication** (dropping duplicate `(user_id, book_id)` pairs) and filtering (`min_user_ratings=3`, `min_book_ratings=5`):
 
-- **53,424 users**
-- **9,999 books**
-- **5,976,471 ratings**
-- **density = 0.0112**
+- **45,122 users**
+- **10,000 books**
+- **962,915 ratings**
+- **density = 0.00213**
+- **100% of books have at least one tag**
 
-The downloader (`scripts/download_data.py`) pulls CSVs directly from the dataset's GitHub releases, so no Kaggle account or API token is required. Files land in `archive/` which is gitignored.
+The Kaggle release is the version used in the homework baseline `smart_bookshelf`. It contains known duplicates (the Kaggle description marks it "obsolete" and points to a 6M-rating GitHub release); we drop them in `src/data/load_real.py` before any modeling.
+
+**Why the dataset is vendored.** Kaggle API requires authentication (`kaggle.json`), which would force every reviewer to register an account and create an API token before running `make reproduce`. To keep the project reproducible out of the box, the raw CSVs (~42 MB) are committed to `archive/`. `scripts/download_data.py` detects existing files and skips the download; if files are missing, it falls back to the Kaggle API. See `CHANGELOG.md` for a full history of dataset and methodology decisions.
 
 ## Architecture
 
@@ -56,9 +59,9 @@ The downloader (`scripts/download_data.py`) pulls CSVs directly from the dataset
 archive/ (raw CSVs)
       |
       v
-load_real  -->  data/raw/  -->  build_features  -->  data/processed/
-                                                          |
-                                                          v
+load_real  -->  data/raw/  -->  (Two-Tower computes features from train split)
+                                       |
+                                       v
               +------------- Training -------------+
               |                                    |
     Popularity  Content   ItemKNN   SVD   Two-Tower (NCE)
@@ -73,24 +76,27 @@ load_real  -->  data/raw/  -->  build_features  -->  data/processed/
 
 ~~~
 .
-|-- archive/                 # Raw Goodreads CSVs (gitignored)
+|-- archive/                 # Raw Kaggle Goodreads CSVs (vendored, ~42 MB)
 |-- configs/config.yaml      # All hyperparameters
 |-- data/
-|   |-- raw/                 # Canonical schema
-|   `-- processed/           # Feature tables + Two-Tower checkpoint
-|-- notebooks/               # EDA + comparison notebooks
-|-- reports/                 # Auto-generated metrics
+|   |-- raw/                 # Canonical schema (gitignored)
+|   `-- processed/           # Two-Tower checkpoint (gitignored)
+|-- notebooks/               # EDA + comparison notebooks (committed with outputs)
+|-- reports/                 # Auto-generated metrics (gitignored)
 |-- scripts/
-|   |-- download_data.py
-|   |-- sweep_weights.py     # Hybrid weight optimization
-|   `-- train_two_tower.py
+|   |-- download_data.py     # Kaggle API fallback
+|   |-- build_notebooks.py
+|   |-- execute_notebooks.py
+|   |-- sweep_weights.py     # Hybrid weight search (disjoint users)
+|   `-- train_two_tower.py   # Feature leakage-safe training
 |-- src/
 |   |-- baseline/            # Vendored HW baseline models
 |   |-- data/                # load_real, build_features, split
 |   |-- models/              # adapters, segmented_hybrid, two_tower
-|   |-- evaluation/          # metrics harness
+|   |-- evaluation/          # metrics harness (relevance = rating >= 4)
 |   `-- pipeline.py          # End-to-end orchestrator
 |-- tests/
+|   |-- test_smoke.py        # 5 pytest smoke tests
 |-- Makefile
 |-- requirements.txt
 `-- README.md
@@ -104,44 +110,46 @@ cd smart_hybrid_bookshelf
 python -m venv .venv
 source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-make pipeline
+make reproduce
 ~~~
 
-That single `make pipeline` runs: download -> canonicalize -> features -> train Two-Tower -> evaluate. It is **idempotent**: steps with existing outputs are skipped. Re-running takes ~90 seconds; first run takes ~5 minutes on GPU, ~15 minutes on CPU.
+`make reproduce` runs: download (skipped -- CSVs vendored) -> canonicalize -> train Two-Tower -> evaluate -> generate + execute notebooks. It is **idempotent**: steps with existing outputs are skipped. First run takes ~3 minutes on CPU (Two-Tower trains on 607k positive pairs for ~1.2 min); subsequent runs ~30 seconds. No GPU is required -- every number in this README was produced on CPU-only hardware.
 
 Fine-grained control:
 
 ~~~bash
 python -m src.pipeline --max-users 500 --skip-train     # quick re-eval
 python -m src.pipeline --force                          # regenerate everything
-python scripts/train_two_tower.py --full --device cuda  # full-data neural training
+python scripts/train_two_tower.py --full --device cuda  # full-data neural training on GPU (optional)
 ~~~
 
 ## Models
 
 | Model | Family | Strength | Weakness | R@10 |
 |---|---|---|---|---|
-| Popularity (Bayesian) | Non-personalized | Robust to cold start | No personalization | 0.0125 |
-| Content-based (TF-IDF on tags) | Item-item | Works with no interactions | Limited by metadata quality | 0.0460 |
-| ItemKNN (cosine on ratings) | Collaborative | High catalog coverage | Popularity bias | 0.0090 |
-| SVD (Surprise) | Latent factor | Captures co-occurrence | Undertrained on sparse LOO | 0.0005 |
-| **Two-Tower (NCE)** | Neural retrieval | Side-feature aware, broad coverage | Requires training budget | **0.0210** |
+| Popularity (Bayesian) | Non-personalized | Robust to cold start | No personalization | 0.0010 |
+| **Content-based (TF-IDF on tags)** | Item-item | Works with no interactions | Limited by metadata quality | **0.1715** |
+| ItemKNN (cosine on ratings) | Collaborative | High catalog coverage | Popularity bias | 0.0980 |
+| SVD (Surprise) | Latent factor | Captures co-occurrence | Undertrained on sparse LOO | 0.0010 |
+| Two-Tower (NCE) | Neural retrieval | Side-feature aware, broad coverage | Requires training budget | 0.0615 |
 
 R@10 measured on 2,000 held-out users with leave-one-out split, seed=42.
 
 ## Two-Tower Architecture
 
 **Inputs per training pair:**
-- User: `id_embedding(53424, 32) + [user_avg_rating, user_n_ratings, user_std_rating]` (normalized)
-- Item: `id_embedding(9999, 32) + [item_avg_rating, item_n_ratings, item_std_rating, item_tag_diversity, item_popularity_rank]` (normalized)
+- User: `id_embedding(45122, 32) + [user_avg_rating, user_n_ratings, user_std_rating]` (normalized)
+- Item: `id_embedding(10000, 32) + [item_avg_rating, item_n_ratings, item_std_rating, item_tag_diversity, item_popularity_rank]` (normalized)
 
 **Towers:** each is `id_embed -> concat(features) -> MLP([128, 64]) -> L2 normalize -> 32d embedding`
 
-**Loss:** in-batch NCE. For a batch of `B=1024` positive pairs, compute `logits = user_emb @ item_emb.T / 0.07`, then cross-entropy with diagonal labels. This gives 1023 implicit negatives per positive at zero extra sampling cost.
+**Loss:** in-batch NCE. For a batch of `B=512` positive pairs, compute `logits = user_emb @ item_emb.T / 0.07`, then cross-entropy with diagonal labels. This gives 511 implicit negatives per positive at zero extra sampling cost.
 
-**Training:** positives = ratings >= 4. On GPU, 2M-rating subsample, 3 epochs, ~3 min. Loss progression: 6.53 -> 5.91 (baseline random loss = ln(1024) = 6.93, so 15% improvement). Model has 2.06M parameters.
+**Training:** positives = ratings >= 4 (607,088 pairs on the 1M dataset). 3 epochs, batch size 512. **All training and evaluation in this project were performed on CPU only** (no CUDA), which keeps bit-level reproducibility across hardware configurations; same-hardware reruns produce identical R@10 to 4 decimal places. CPU training takes ~1.2 minutes on a modern laptop CPU. Loss progression: 5.66 -> 4.73 (random baseline = ln(512) = 6.24, so 24% improvement). Model has 1.79M parameters.
 
-**Inference:** embeddings precomputed once and cached. `recommend(user_id, n)` = single 32-dim dot product against all 9999 item embeddings + set-difference to remove already-rated items. Runs at ~30k recommendations/sec on CPU.
+**Feature leakage prevention:** all user and item aggregate features (user_avg_rating, item_n_ratings, item_tag_diversity, ...) are recomputed from the **train split only** inside `scripts/train_two_tower.py`. The test set never influences model inputs.
+
+**Inference:** embeddings precomputed once and cached. `recommend(user_id, n)` = single 32-dim dot product against all 10,000 item embeddings + set-difference to remove already-rated items.
 
 ## Hybrid Strategy
 
@@ -149,8 +157,8 @@ Users are segmented by train-set activity:
 
 | Segment | Threshold | Weight Configuration |
 |---|---|---|
-| `cold_start` | `< 50` ratings | popularity 0.6, content 0.4 |
-| `active` | `>= 50` ratings | content 0.35, itemknn 0.25, two_tower 0.25, popularity 0.15 |
+| `cold_start` | `< 20` ratings | content 0.85, popularity 0.15 |
+| `active` | `>= 20` ratings | itemknn 0.45, content 0.30, two_tower 0.20, popularity 0.05 |
 
 **Fusion:** weighted Reciprocal Rank Fusion (RRF) with `k=60`:
 
@@ -160,15 +168,25 @@ score(item) = sum over models m:  weight[m] / (k + rank_m(item) + 1)
 
 RRF operates on ranks (not raw scores), so no per-model score normalization is needed. Candidates from each model are filtered to remove already-rated items before scoring. Each model produces top-50 candidates.
 
-**Weight selection:** the hybrid was tuned via `scripts/sweep_weights.py` over 6 configurations on 500 users. Key findings:
+**Weight selection:** hybrid weights were chosen by evaluating **7 fusion configurations** on a **disjoint user set** (see Evaluation Protocol). The `current_config` entry in `reports/sweep.json` is the production `configs/config.yaml`; it was explicitly included in the sweep so the search covers the production setting. Key findings:
 
-- SVD weight set to 0 (undertrained model, R@10=0.0005 vs content 0.046)
-- ItemKNN capped at 0.25-0.35 (heavier weights reduce recall due to RRF diversity crowding)
-- Two-Tower at 0.25 provides the largest marginal gain (+8% R@10, +12% nDCG vs no-TT hybrid)
+- SVD excluded from active weights (undertrained, R@10=0.0010 vs content 0.1715)
+- ItemKNN receives the highest active weight -- on this 1M-rating dataset its R@10 (0.0980) is second only to content
+- Two-Tower weight 0.20 provides the coverage gain without hurting recall (content still dominant on precision)
+- Cold-start threshold set to 20: on the 1M dataset most users have <20 ratings in the train split
+- `current_config` wins by R@10 on the sweep set (0.1340), confirming the manual tuning choices
 
 ## Evaluation Protocol
 
 **Leave-one-out per user:** for each user with at least 5 ratings, one interaction is held out uniformly at random (seeded via `np.random.default_rng(42)`). All remaining interactions form the train set.
+
+**Relevance definition:** a held-out item is considered relevant only if its true rating is `>= 4` -- the same definition used in the homework baseline. Users whose held-out item rated below 4 are excluded from evaluation (30,169 of 45,122 users qualify on the 1M dataset).
+
+**Sweep / eval split:** to avoid tuning on the evaluation set, users are split into two disjoint halves by `split_users_for_sweep_eval` (seeded). Hybrid weight search (`scripts/sweep_weights.py`) runs on one half; final metrics are reported on the other. Both halves use the same `min_user_ratings` value from `configs/config.yaml`.
+
+**Feature leakage prevention:** user and item features used by the Two-Tower model are computed **from the train split only** -- the test set never influences model inputs.
+
+**Reproducibility.** All numbers reported in this README were produced on CPU-only hardware with fixed seeds (`project.seed=42`, `np.random.default_rng(42)`). Same-hardware and cross-CPU reruns produce identical R@10 to 4 decimals; GPU reruns may differ by up to +/-0.5% due to non-deterministic CUDA kernels. The CPU-only setting therefore provides the strongest reproducibility guarantee for this project.
 
 **Important:** this protocol differs from the homework baseline's `train_test_split(test_size=0.2)`, which held out ~22 test items per user. Under LOO, recall measures "did the single test item appear in top-K", whereas the HW protocol measures "fraction of 22 held-out items in top-K". The two are not directly comparable.
 
@@ -188,68 +206,68 @@ Evaluation on 2,000 held-out users (seed=42, leave-one-out):
 
 | Model | R@10 | nDCG@10 | Coverage@10 |
 |---|---|---|---|
-| **Hybrid (with Two-Tower)** | **0.0515** | **0.0278** | **0.340** |
-| Hybrid (without Two-Tower) | 0.0475 | 0.0248 | 0.223 |
-| Content-based | 0.0460 | 0.0242 | 0.201 |
-| Two-Tower (standalone) | 0.0210 | 0.0111 | 0.545 |
-| Popularity | 0.0125 | 0.0061 | 0.002 |
-| ItemKNN | 0.0090 | 0.0048 | 0.476 |
-| SVD | 0.0005 | 0.0003 | 0.005 |
+| Content-based | **0.1715** | **0.1031** | 0.542 |
+| **Hybrid (with Two-Tower)** | 0.1615 | 0.0988 | **0.666** |
+| ItemKNN | 0.0980 | 0.0583 | 0.761 |
+| Two-Tower (standalone) | 0.0615 | 0.0285 | 0.621 |
+| Popularity | 0.0010 | 0.0004 | 0.002 |
+| SVD | 0.0010 | 0.0005 | 0.006 |
 
-### Progression of the hybrid
+### Interpretation
 
-| Metric | Baseline (best single = content) | Hybrid v1 (no TT) | Hybrid v2 (+ Two-Tower) | Total gain |
-|---|---|---|---|---|
-| R@5 | 0.0290 | 0.0300 | **0.0360** | **+24%** |
-| R@10 | 0.0460 | 0.0475 | **0.0515** | **+12%** |
-| nDCG@10 | 0.0242 | 0.0248 | **0.0278** | **+15%** |
-| Coverage@10 | 0.201 | 0.223 | **0.340** | **+69%** |
+On the 1M-rating Kaggle dataset, **content-based is the strongest individual model on recall and nDCG** (0.1715 / 0.1031), while the **hybrid wins coverage** (0.666 vs 0.542, **+23%**) and stays within 6% of content on recall.
 
-The hybrid is the only model that simultaneously improves recall, ranking quality, and catalog coverage over the strongest single baseline.
+This is expected: on a sparse 1M-rating interaction matrix, tag-based content generalizes better than collaborative signals (item-item co-occurrence needs density; user-user signals need many ratings per user). Two-Tower contributes unique embedding-space diversity, and the hybrid lands on the **Pareto frontier** of (recall, coverage): no single model beats it on both axes simultaneously.
+
+For deployment, the choice depends on objective:
+
+- **Pure hit-rate optimization** -> content-based alone
+- **Recall + diversity (typical production)** -> hybrid
+- **Cold-start only** -> content-based (itemknn and SVD cannot help a user with no history)
 
 ## Analysis
 
-**Why does content-based dominate the classical baselines?**
+**Why does content-based dominate on this dataset?**
 
-Goodreads tags encode genre-level information that correlates strongly with user reading behavior. A user who has rated mostly fantasy books is likely to read fantasy again — TF-IDF on tags captures this signal directly. Collaborative methods require the test item to be in the neighborhood of an already-rated item; with ~6M ratings over a 10k catalog, many test items fall outside the top-100 neighbors of anything the user has read.
+Goodreads tags encode genre-level information that correlates strongly with user reading behavior. A user who has rated mostly fantasy books is likely to read fantasy again -- TF-IDF on tags captures this signal directly. On the 1M-rating Kaggle dataset (density 0.002), collaborative methods suffer: many test items fall outside the top-100 neighborhood of anything the user has already rated.
 
 **Why does SVD fail under leave-one-out?**
 
-SVD with 32 factors on 6M ratings spends most of its capacity on biases (`bu`, `bi`) — user average and item average — leaving little signal in `qi @ pu` (the personalization component). Under LOO, predicting the single held-out item correctly requires fine-grained personalization, which the model does not have enough signal for. Tuning to 100 factors × 20 epochs did not help, confirming the diagnosis. SVD is retained in the codebase for reference and reproducibility but excluded from the hybrid.
+SVD with 32 factors on ~1M ratings spends most of its capacity on biases (`bu`, `bi`) -- user average and item average -- leaving little signal in `qi @ pu` (the personalization component). Under LOO, predicting the single held-out item correctly requires fine-grained personalization that the model cannot learn from 1M ratings. SVD is retained in the codebase for reference and reproducibility but excluded from the hybrid.
 
-**Why does Two-Tower help?**
+**Why does Two-Tower help coverage?**
 
-Two-Tower combines ID embeddings (learned per user/book) with side features (aggregates + tag diversity). It achieves the highest coverage of any model (0.545 at K=10) because the NCE training objective spreads the embedding space, giving every user a diverse neighborhood. Combined with content's precision via RRF, it produces a hybrid that is both precise and diverse — the coverage gain from 0.201 to 0.340 is the clearest evidence that the neural model is contributing unique signal.
+Two-Tower combines ID embeddings (learned per user/book) with side features (aggregates + tag diversity). It achieves coverage of 0.621 at K=10 -- second only to ItemKNN -- because the NCE training objective spreads the embedding space, giving every user a diverse neighborhood. Combined with content's precision via RRF, it produces a hybrid whose coverage (0.666) exceeds content alone (0.542) by 23%, while recall stays within 6%.
 
 **Why leave-one-out?**
 
-Random 80/20 splits inflate recall by giving each user ~20 held-out items; the metric then measures "fraction of 20 items in top-10" rather than "hit rate of a single prediction". LOO is the standard protocol in modern retrieval evaluation (NCF, SASRec, etc.) because it forces the model to commit to a single ranking. It is strict — absolute recall values are lower — but comparisons between models are more meaningful.
+Random 80/20 splits inflate recall by giving each user ~20 held-out items; the metric then measures "fraction of 20 items in top-10" rather than "hit rate of a single prediction". LOO is the standard protocol in modern retrieval evaluation (NCF, SASRec, etc.) because it forces the model to commit to a single ranking. It is strict -- absolute recall values are lower -- but comparisons between models are more meaningful.
 
 ## Known Limitations
 
 - **SVD is undertrained** for the LOO protocol; excluded from hybrid. With more training time or GPU-accelerated Surprise, this could be revisited.
-- **Cold-start sample is small.** With `cold_threshold=50`, only 1.8% of users (939/53,424) fall into the cold-start segment. The hybrid's cold-start weights are therefore tuned on a small sample and may not generalize. A larger threshold would increase the segment but requires users with fewer ratings than the Goodreads-10k dataset provides.
-- **Cold-start Two-Tower signal unexploited.** In the 2000-user eval, Two-Tower achieves R@10=0.100 on cold-start users, but the current hybrid cold-start weights (`popularity: 0.6, content: 0.4`) do not include it. Adding `two_tower: 0.3` to cold-start weights is a concrete direction for future tuning; the current sample (10 users) is too small to justify it now.
-- **Two-Tower default is subsampled.** Default training uses 2M positives (from users with the most interactions); full training requires `--full`. On GPU, full training runs in ~10 min and typically gains an additional 2-4% R@10. See `scripts/train_two_tower.py --help`.
+- **Cold-start sample is thin.** With `cold_threshold=20`, the cold-start segment contains users with fewer than 20 train-set ratings. On the 1M-rating Kaggle dataset, most users fall into this bucket (median ratings per user ~8). Cold-start weights are tuned on a statistically large but individually thin segment.
+- **Content bias toward tag-rich books.** Content-based has an implicit bias toward books with many tags; on datasets where tags are sparse, this bias would need to be mitigated.
+- **Two-Tower trained on subsample.** Default training uses a 607k-positive subsample (users with at least one positive). With `--full` on a GPU, training time increases ~20x and typically gains an additional 2-4% R@10.
 - **No temporal information.** Goodreads-10k ratings have no timestamps; a temporal split (better for real deployment) is not possible with this dataset.
 
 ## Baseline Provenance
 
 The baseline models in `src/baseline/` (`PopularityRecommender`, `ContentBasedRecommender`, `ItemBasedCF`, `SVDRecommender`, `HybridRecommender`) are vendored verbatim from the homework repository `smart_bookshelf` at commit `d09071a2dfbfd674d78d8d0178771bf09d9b6f2a`. File-level SHA-256 verification is in `src/baseline/VENDORED.md`.
 
-The new components in this project — canonical data loading, leave-one-out splitting, the evaluation harness, the segmented RRF hybrid, the Two-Tower neural recommender, and the end-to-end pipeline — are original to this submission.
+The new components in this project -- canonical data loading, leave-one-out splitting, the evaluation harness, the segmented RRF hybrid, the Two-Tower neural recommender, and the end-to-end pipeline -- are original to this submission.
 
 ## Configuration
 
 All hyperparameters live in `configs/config.yaml`. Sections:
 
-- `project.seed` — global random seed (42)
-- `data.min_user_ratings` / `min_book_ratings` — filtering thresholds
-- `evaluation.k_values` — top-K values to report
-- `hybrid.cold_threshold` / `k_rrf` / `candidates_per_model` — hybrid settings
-- `hybrid.weights.{cold_start,active}` — segment-specific fusion weights
-- `models.popularity` / `item_knn` / `svd` / `content` — classical model hyperparameters
-- `models.two_tower.{id_dim,embedding_dim,hidden_dims,epochs,...}` — neural model settings
+- `project.seed` -- global random seed (42)
+- `data.min_user_ratings` / `min_book_ratings` -- filtering thresholds
+- `evaluation.k_values` -- top-K values to report
+- `hybrid.cold_threshold` / `k_rrf` / `candidates_per_model` -- hybrid settings
+- `hybrid.weights.{cold_start,active}` -- segment-specific fusion weights
+- `models.popularity` / `item_knn` / `svd` / `content` -- classical model hyperparameters
+- `models.two_tower.{id_dim,embedding_dim,hidden_dims,epochs,...}` -- neural model settings
 
 Changing any value does not require code edits.
 

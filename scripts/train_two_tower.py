@@ -11,6 +11,11 @@ import torch.nn.functional as F
 import yaml
 from torch.utils.data import Dataset, DataLoader
 
+from src.data.build_features import (
+    build_user_features,
+    build_item_features,
+    build_item_metadata,
+)
 from src.data.split import random_leave_one_out_split
 from src.models.two_tower import TwoTowerModel
 
@@ -58,7 +63,7 @@ class PairDataset(Dataset):
         return self.user_ids[idx], self.user_features[ui], self.item_ids[idx], self.item_features[ii]
 
 
-def build_features(users_df, items_df, user_id_to_idx, item_id_to_idx):
+def build_features_for_model(users_df, items_df, user_id_to_idx, item_id_to_idx):
     user_cols = ["user_avg_rating", "user_n_ratings", "user_std_rating"]
     item_cols = ["item_avg_rating", "item_n_ratings", "item_std_rating", "item_tag_diversity", "item_popularity_rank"]
     users_idx = users_df.set_index("user_id").reindex(list(user_id_to_idx.keys()))
@@ -128,12 +133,19 @@ def main():
     print("device: " + str(device))
 
     ratings = pd.read_csv("data/raw/ratings.csv")
-    users_df = pd.read_csv("data/processed/user_features.csv")
-    items_df = pd.read_csv("data/processed/item_features.csv")
+    books = pd.read_csv("data/raw/books.csv")
 
     min_r = cfg["data"]["min_user_ratings"]
     train_ratings, _ = random_leave_one_out_split(ratings, min_ratings=min_r, seed=args.seed)
     print("train ratings (test held out): " + str(len(train_ratings)))
+
+    user_feats = build_user_features(train_ratings)
+    item_feats = build_item_features(train_ratings)
+    item_meta = build_item_metadata(books)
+    items_df = item_feats.merge(item_meta, on="book_id", how="left")
+    users_df = user_feats
+    print("user_features (train only, no leakage): " + str(users_df.shape))
+    print("item_features (train agg + metadata): " + str(items_df.shape))
 
     user_id_to_idx = {int(u): i for i, u in enumerate(sorted(ratings["user_id"].unique()))}
     item_id_to_idx = {int(b): i for i, b in enumerate(sorted(ratings["book_id"].unique()))}
@@ -150,9 +162,9 @@ def main():
         positives = positives.sample(n=sample_size, random_state=args.seed)
         print("subsample: " + str(len(positives)) + " (use --full for all)")
 
-    user_features, item_features = build_features(users_df, items_df, user_id_to_idx, item_id_to_idx)
-    print("user_features: " + str(user_features.shape))
-    print("item_features: " + str(item_features.shape))
+    user_features, item_features = build_features_for_model(users_df, items_df, user_id_to_idx, item_id_to_idx)
+    print("user_features tensor: " + str(user_features.shape))
+    print("item_features tensor: " + str(item_features.shape))
 
     model = TwoTowerModel(
         num_users=len(user_id_to_idx),
@@ -197,8 +209,6 @@ def main():
         "config": tt,
     }, args.checkpoint)
     print("saved checkpoint: " + args.checkpoint)
-    print("user_emb: " + str(user_emb.shape))
-    print("item_emb: " + str(item_emb.shape))
 
 
 if __name__ == "__main__":

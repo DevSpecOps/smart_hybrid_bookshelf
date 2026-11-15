@@ -27,7 +27,10 @@ class EvaluationHarness:
 
     def evaluate(self, train_df, test_df):
         train_counts = train_df.groupby("user_id").size().to_dict()
-        test_relevant = test_df.groupby("user_id")["book_id"].apply(set).to_dict()
+        relevant_test = test_df[test_df["rating"] >= 4]
+        test_relevant = (
+            relevant_test.groupby("user_id")["book_id"].apply(set).to_dict()
+        )
         catalog = set(train_df["book_id"].unique()) | set(test_df["book_id"].unique())
         total_items = len(catalog)
 
@@ -74,12 +77,7 @@ class EvaluationHarness:
         out = {"coverage": float(coverage)}
         for bucket, entries in buckets.items():
             if not entries:
-                out[bucket] = {
-                    "precision": 0.0,
-                    "recall": 0.0,
-                    "ndcg": 0.0,
-                    "n_users": 0,
-                }
+                out[bucket] = {"precision": 0.0, "recall": 0.0, "ndcg": 0.0, "n_users": 0}
                 continue
             out[bucket] = {
                 "precision": float(np.mean([e["p"] for e in entries])),

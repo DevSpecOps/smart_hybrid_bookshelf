@@ -1,14 +1,14 @@
-.PHONY: install data features train-neural eval pipeline reproduce clean notebooks help
+.PHONY: install data train-neural eval pipeline reproduce notebooks clean help
 
 help:
 	@echo "Targets:"
 	@echo "  install        - pip install -r requirements.txt"
-	@echo "  data           - download Goodreads CSVs into archive/"
-	@echo "  features       - build data/raw/ and data/processed/ from archive/"
-	@echo "  train-neural   - train Two-Tower model (GPU auto-detect)"
+	@echo "  data           - download + canonicalize Goodreads CSVs"
+	@echo "  train-neural   - train Two-Tower model (feature engineering from train split only)"
 	@echo "  eval           - run evaluation, write reports/metrics_final.json"
 	@echo "  pipeline       - full end-to-end run (skips completed stages)"
-	@echo "  reproduce      - alias for pipeline"
+	@echo "  notebooks      - regenerate and execute EDA/comparison notebooks"
+	@echo "  reproduce      - pipeline + notebooks"
 	@echo "  clean          - remove generated artifacts"
 
 install:
@@ -16,10 +16,7 @@ install:
 
 data:
 	python scripts/download_data.py
-
-features:
 	python -m src.data.load_real --archive archive --output data/raw --config configs/config.yaml
-	python -m src.data.build_features --raw data/raw --output data/processed
 
 train-neural:
 	python scripts/train_two_tower.py --config configs/config.yaml
@@ -36,4 +33,4 @@ notebooks:
 reproduce: pipeline notebooks
 
 clean:
-	rm -rf data/raw/*.csv data/processed/*.csv data/processed/*.pt reports/*.json
+	rm -rf data/raw/*.csv data/processed/*.pt reports/*.json

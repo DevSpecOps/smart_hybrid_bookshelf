@@ -31,10 +31,17 @@ def build_tag_strings(book_tags, tags, top_k=20):
 
 
 def build_books(books, book_tags, tags):
+    has_gr = "goodreads_book_id" in books.columns
+    if has_gr:
+        internal_id = books["book_id"].astype(int)
+        bt_key = books["goodreads_book_id"].astype(int)
+    else:
+        internal_id = books["id"].astype(int)
+        bt_key = books["book_id"].astype(int)
     tag_map = build_tag_strings(book_tags, tags, top_k=20)
     out = pd.DataFrame({
-        "book_id": books["book_id"].astype(int),
-        "goodreads_book_id": books["goodreads_book_id"].astype(int),
+        "book_id": internal_id,
+        "goodreads_book_id": bt_key,
         "title": books["title"].astype(str),
         "original_title": books.get("original_title", books["title"]).fillna("").astype(str),
         "authors": books.get("authors", "").fillna("").astype(str),
@@ -56,7 +63,8 @@ def filter_ratings(ratings, min_user, min_book):
     book_counts = df.groupby("book_id").size()
     keep_books = book_counts[book_counts >= min_book].index
     df = df[df["book_id"].isin(keep_books)].copy()
-    return df.reset_index(drop=True)
+    df = df.drop_duplicates(subset=["user_id", "book_id"], keep="last").reset_index(drop=True)
+    return df
 
 
 def main():
@@ -71,6 +79,9 @@ def main():
     tags_raw = pd.read_csv(arc / "tags.csv")
     book_tags_raw = pd.read_csv(arc / "book_tags.csv")
 
+    has_gr = "goodreads_book_id" in books_raw.columns
+    print("Schema: " + ("GitHub" if has_gr else "Kaggle"))
+
     min_user = cfg["data"]["min_user_ratings"]
     min_book = cfg["data"]["min_book_ratings"]
 
@@ -80,8 +91,8 @@ def main():
     keep_book_ids = set(ratings["book_id"].unique())
     books = books[books["book_id"].isin(keep_book_ids)].reset_index(drop=True)
 
-    keep_goodreads = set(books["goodreads_book_id"].unique())
-    book_tags = book_tags_raw[book_tags_raw["goodreads_book_id"].isin(keep_goodreads)].reset_index(drop=True)
+    keep_bt_keys = set(books["goodreads_book_id"].unique())
+    book_tags = book_tags_raw[book_tags_raw["goodreads_book_id"].isin(keep_bt_keys)].reset_index(drop=True)
     used_tag_ids = set(book_tags["tag_id"].unique())
     tags = tags_raw[tags_raw["tag_id"].isin(used_tag_ids)].reset_index(drop=True)
 
@@ -99,6 +110,7 @@ def main():
     print("book_tags: " + str(len(book_tags)))
     print("tags: " + str(len(tags)))
     print("density: " + str(round(len(ratings) / (len(users) * len(books)), 8)))
+    print("books with tags: " + str(round((books["tags"] != "").mean() * 100, 1)) + "%")
 
 
 if __name__ == "__main__":

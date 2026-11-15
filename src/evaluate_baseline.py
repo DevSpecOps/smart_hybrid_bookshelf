@@ -10,7 +10,7 @@ from src.baseline import (
     ItemBasedCF,
     SVDRecommender,
 )
-from src.data.split import random_leave_one_out_split
+from src.data.split import random_leave_one_out_split, split_users_for_sweep_eval
 from src.evaluation.harness import EvaluationHarness
 from src.evaluation.report import save_metrics
 from src.models.adapters import ModelAdapter
@@ -54,11 +54,7 @@ def build_models(raw_dir, cfg):
         ("itemknn", lambda: ItemBasedCF(n_neighbors=knn_neighbors, k_predict=knn_predict), None),
     ]
     if SVDRecommender is not None:
-        candidates.append((
-            "svd",
-            lambda: SVDRecommender(n_factors=svd_components, n_epochs=svd_iter),
-            None,
-        ))
+        candidates.append(("svd", lambda: SVDRecommender(n_factors=svd_components, n_epochs=svd_iter), None))
 
     base = {}
     for name, factory, extra in candidates:
@@ -97,12 +93,8 @@ def print_summary(results):
     for name, per_k in results.items():
         for k, m in per_k.items():
             g = m["global"]
-            line = "{0:12s} {1:6s} P={2:.4f} R={3:.4f} nDCG={4:.4f} cov={5:.3f} n={6}"
-            print(line.format(
-                name, k,
-                g["precision"], g["recall"], g["ndcg"],
-                m["coverage"], g["n_users"],
-            ))
+            print("{0:12s} {1:6s} P={2:.4f} R={3:.4f} nDCG={4:.4f} cov={5:.3f} n={6}".format(
+                name, k, g["precision"], g["recall"], g["ndcg"], m["coverage"], g["n_users"]))
 
 
 def main():
@@ -113,11 +105,16 @@ def main():
     min_r = cfg["data"]["min_user_ratings"]
     train, test = random_leave_one_out_split(raw, min_ratings=min_r, seed=seed)
 
+    relevant_test = test[test["rating"] >= 4]
+    eligible_users = sorted(relevant_test["user_id"].unique().tolist())
+    eval_users, sweep_users = split_users_for_sweep_eval(eligible_users, seed=seed)
     if args.max_users:
-        keep = test["user_id"].drop_duplicates().head(args.max_users).tolist()
-        test = test[test["user_id"].isin(keep)].reset_index(drop=True)
+        eval_users = eval_users[:args.max_users]
 
+    test = test[test["user_id"].isin(eval_users)].reset_index(drop=True)
     print("train: " + str(train.shape) + "  test: " + str(test.shape))
+    print("eligible users (positive test item): " + str(len(eligible_users)))
+    print("eval users (disjoint from sweep " + str(len(sweep_users)) + "): " + str(len(eval_users)))
 
     models = build_models(Path("data/raw"), cfg)
     print("built models: " + str(list(models.keys())))
