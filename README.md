@@ -127,13 +127,13 @@ python scripts/train_two_tower.py --full --device cuda  # full-data neural train
 
 | Model | Family | Strength | Weakness | R@10 |
 |---|---|---|---|---|
-| Popularity (Bayesian) | Non-personalized | Robust to cold start | No personalization | 0.0010 |
-| **Content-based (TF-IDF on tags)** | Item-item | Works with no interactions | Limited by metadata quality | **0.1715** |
-| ItemKNN (cosine on ratings) | Collaborative | High catalog coverage | Popularity bias | 0.0980 |
-| SVD (Surprise) | Latent factor | Captures co-occurrence | Undertrained on sparse LOO | 0.0010 |
-| Two-Tower (NCE) | Neural retrieval | Side-feature aware, broad coverage | Requires training budget | 0.0615 |
+| Popularity (Bayesian) | Non-personalized | Robust to cold start | No personalization | 0.0013 |
+| **Content-based (TF-IDF on tags)** | Item-item | Works with no interactions | Limited by metadata quality | **0.1653** |
+| ItemKNN (cosine on ratings) | Collaborative | High catalog coverage | Popularity bias | 0.0955 |
+| SVD (Surprise) | Latent factor | Captures co-occurrence | Undertrained on sparse LOO | 0.0013 |
+| Two-Tower (NCE) | Neural retrieval | Side-feature aware, broad coverage | Requires training budget | 0.0632 |
 
-R@10 measured on 2,000 held-out users with leave-one-out split, seed=42.
+R@10 measured on the full held-out evaluation set (15,084 users, seed=42).
 
 ## Two-Tower Architecture
 
@@ -168,17 +168,19 @@ score(item) = sum over models m:  weight[m] / (k + rank_m(item) + 1)
 
 RRF operates on ranks (not raw scores), so no per-model score normalization is needed. Candidates from each model are filtered to remove already-rated items before scoring. Each model produces top-50 candidates.
 
+**Segment naming note:** `cold_start` refers to users with fewer than `cold_threshold` (20) train-set ratings -- that is, users with **thin interaction history**, not true cold-start users with zero history. Goodreads-10k contains no zero-history users by construction (every user has at least 5 ratings in the raw data). The segment label is kept for compatibility with the earlier homework baseline.
+
 **Weight selection:** hybrid weights were chosen by evaluating **7 fusion configurations** on a **disjoint user set** (see Evaluation Protocol). The `current_config` entry in `reports/sweep.json` is the production `configs/config.yaml`; it was explicitly included in the sweep so the search covers the production setting. Key findings:
 
-- SVD excluded from active weights (undertrained, R@10=0.0010 vs content 0.1715)
-- ItemKNN receives the highest active weight -- on this 1M-rating dataset its R@10 (0.0980) is second only to content
+- SVD excluded from active weights (undertrained, R@10=0.0013 vs content 0.1653)
+- ItemKNN receives the highest active weight -- on this 1M-rating dataset its R@10 (0.0955) is second only to content
 - Two-Tower weight 0.20 provides the coverage gain without hurting recall (content still dominant on precision)
 - Cold-start threshold set to 20: on the 1M dataset most users have <20 ratings in the train split
-- `current_config` wins by R@10 on the sweep set (0.1340), confirming the manual tuning choices
+- `current_config` wins by R@10 on the sweep set (0.1360), confirming the manual tuning choices
 
 ## Evaluation Protocol
 
-**Leave-one-out per user:** for each user with at least 5 ratings, one interaction is held out uniformly at random (seeded via `np.random.default_rng(42)`). All remaining interactions form the train set.
+**Leave-one-out per user:** for each user with at least 3 ratings (`min_user_ratings` from config), one interaction is held out uniformly at random (seeded via `np.random.default_rng(42)`). All remaining interactions form the train set.
 
 **Relevance definition:** a held-out item is considered relevant only if its true rating is `>= 4` -- the same definition used in the homework baseline. Users whose held-out item rated below 4 are excluded from evaluation (30,169 of 45,122 users qualify on the 1M dataset).
 
@@ -200,22 +202,22 @@ Segmented results are reported separately for `cold_start` and `active` users.
 
 ## Results
 
-Evaluation on 2,000 held-out users (seed=42, leave-one-out):
+Evaluation on the full held-out set (15,084 users, seed=42, leave-one-out):
 
 ### R@10 by model
 
 | Model | R@10 | nDCG@10 | Coverage@10 |
 |---|---|---|---|
-| Content-based | **0.1715** | **0.1031** | 0.542 |
-| **Hybrid (with Two-Tower)** | 0.1615 | 0.0988 | **0.666** |
-| ItemKNN | 0.0980 | 0.0583 | 0.761 |
-| Two-Tower (standalone) | 0.0615 | 0.0285 | 0.621 |
-| Popularity | 0.0010 | 0.0004 | 0.002 |
-| SVD | 0.0010 | 0.0005 | 0.006 |
+| Content-based | **0.1653** | **0.1029** | 0.839 |
+| **Hybrid (with Two-Tower)** | 0.1557 | 0.0966 | **0.968** |
+| ItemKNN | 0.0955 | 0.0555 | 0.985 |
+| Two-Tower (standalone) | 0.0632 | 0.0317 | 0.927 |
+| Popularity | 0.0013 | 0.0006 | 0.002 |
+| SVD | 0.0013 | 0.0006 | 0.008 |
 
 ### Interpretation
 
-On the 1M-rating Kaggle dataset, **content-based is the strongest individual model on recall and nDCG** (0.1715 / 0.1031), while the **hybrid wins coverage** (0.666 vs 0.542, **+23%**) and stays within 6% of content on recall.
+On the 1M-rating Kaggle dataset, **content-based is the strongest individual model on recall and nDCG** (0.1653 / 0.1029), while the **hybrid wins coverage** (0.968 vs 0.839, **+15%**) and stays within 6% of content on recall.
 
 This is expected: on a sparse 1M-rating interaction matrix, tag-based content generalizes better than collaborative signals (item-item co-occurrence needs density; user-user signals need many ratings per user). Two-Tower contributes unique embedding-space diversity, and the hybrid lands on the **Pareto frontier** of (recall, coverage): no single model beats it on both axes simultaneously.
 
@@ -237,7 +239,7 @@ SVD with 32 factors on ~1M ratings spends most of its capacity on biases (`bu`, 
 
 **Why does Two-Tower help coverage?**
 
-Two-Tower combines ID embeddings (learned per user/book) with side features (aggregates + tag diversity). It achieves coverage of 0.621 at K=10 -- second only to ItemKNN -- because the NCE training objective spreads the embedding space, giving every user a diverse neighborhood. Combined with content's precision via RRF, it produces a hybrid whose coverage (0.666) exceeds content alone (0.542) by 23%, while recall stays within 6%.
+Two-Tower combines ID embeddings (learned per user/book) with side features (aggregates + tag diversity). It achieves coverage of 0.927 at K=10 -- second only to ItemKNN (0.985) -- because the NCE training objective spreads the embedding space, giving every user a diverse neighborhood. Combined with content's precision via RRF, it produces a hybrid whose coverage (0.968) exceeds content alone (0.839) by 15%, while recall stays within 6%.
 
 **Why leave-one-out?**
 
@@ -246,7 +248,7 @@ Random 80/20 splits inflate recall by giving each user ~20 held-out items; the m
 ## Known Limitations
 
 - **SVD is undertrained** for the LOO protocol; excluded from hybrid. With more training time or GPU-accelerated Surprise, this could be revisited.
-- **Cold-start sample is thin.** With `cold_threshold=20`, the cold-start segment contains users with fewer than 20 train-set ratings. On the 1M-rating Kaggle dataset, most users fall into this bucket (median ratings per user ~8). Cold-start weights are tuned on a statistically large but individually thin segment.
+- **`Cold-start` is a thin-history segment, not true zero-history.** With `cold_threshold=20`, the segment contains users with fewer than 20 train-set ratings (median ~8). No user in Goodreads-10k has zero ratings (minimum is 5 by construction), so `cold_start` here means 'thin history', not 'no history'. The label matches the homework baseline naming for continuity. On the 1M-rating Kaggle dataset, most users fall into this bucket (median ratings per user ~8). Cold-start weights are tuned on a statistically large but individually thin segment.
 - **Content bias toward tag-rich books.** Content-based has an implicit bias toward books with many tags; on datasets where tags are sparse, this bias would need to be mitigated.
 - **Two-Tower trained on subsample.** Default training uses a 607k-positive subsample (users with at least one positive). With `--full` on a GPU, training time increases ~20x and typically gains an additional 2-4% R@10.
 - **No temporal information.** Goodreads-10k ratings have no timestamps; a temporal split (better for real deployment) is not possible with this dataset.

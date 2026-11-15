@@ -34,11 +34,12 @@ base = {
     "svd": ModelAdapter("svd", SVDRecommender(n_factors=32, n_epochs=10)),
 }
 base["two_tower"] = ModelAdapter("two_tower", TwoTowerRecommender.load("data/processed/two_tower.pt"))
-print("Fitting base models...")
+print("Fitting base models on train split (including Two-Tower seen)...")
 for n, a in base.items():
-    if n == "two_tower": continue
-    try: a.fit(train)
-    except Exception as e: print("WARN", n, type(e).__name__, e)
+    try:
+        a.fit(train)
+    except Exception as e:
+        print("WARN", n, type(e).__name__, e)
 print("done")
 
 current_w = cfg["hybrid"]["weights"]

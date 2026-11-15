@@ -2,7 +2,13 @@
 
 All notable changes to this project are documented in this file. The format follows a simple commit-by-commit history aligned with the git log.
 
-## commit eight (latest)
+## commit nine (latest)
+
+### Fixed after second review round
+- **Sweep/eval protocol consistency:** `scripts/sweep_weights.py` now calls `adapter.fit(train)` for all models, including Two-Tower. Previously the Two-Tower `seen` set was loaded from the checkpoint (built on full `ratings`, including held-out items), which could silently exclude test items during sweep-only ranking. Fix aligns sweep and eval on the same train-only interaction history. After re-running sweep, `current_config` still wins by R@10 (0.1360 on sweep set).
+- **README: `min_user_ratings`.** Evaluation Protocol now states "at least 3 ratings" (matching `configs/config.yaml`), not "5 ratings".
+- **README: `cold_start` definition.** Clarified that the label refers to users with thin interaction history (< 20 train-set ratings), not true zero-history users. Goodreads-10k has no zero-rating users by construction.
+## commit eight
 
 ### Dataset alignment
 - **Aligned dataset with HW spec:** switched to the Kaggle release `zygmunt/goodbooks-10k` (1M ratings, deduplicated).
